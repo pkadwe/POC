@@ -14,12 +14,19 @@ import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
 import com.amazonaws.services.dynamodbv2.model.Condition;
-import com.amazonaws.services.dynamodbv2.model.GetItemRequest;
-import com.amazonaws.services.dynamodbv2.model.GetItemResult;
 import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
+import com.amazonaws.services.dynamodbv2.model.QueryRequest;
+import com.amazonaws.services.dynamodbv2.model.QueryResult;
 import com.amazonaws.services.dynamodbv2.model.ScanRequest;
 import com.amazonaws.services.dynamodbv2.model.ScanResult;
 
+/**
+ * 
+ * Helper class as a wrapper for AWS dynamoDB functionality.
+ * 
+ * @author Prashant Kadwe
+ *
+ */
 public class DynamoDBHelper {
 	
 	protected final Log logger = LogFactory.getLog(getClass());
@@ -50,11 +57,7 @@ public class DynamoDBHelper {
             String name = dataAttribute.getKey();
             Object value = dataAttribute.getValue();
             
-            if (value instanceof String) {
-            	item.put(name, new AttributeValue().withS(name));
-            } else if (value instanceof Integer) {
-            	item.put(name, new AttributeValue().withN(name));	
-            }
+            item.put(name, mapAttributeValue(value));
         }
 		
 		PutItemRequest itemRequest = new PutItemRequest().withTableName(tableName).withItem(item);
@@ -64,43 +67,60 @@ public class DynamoDBHelper {
 		conn.shutdown();		
 	}
 	
-	public Map<String, Object> queryKey(String tableName, String hashKeyName, Object hashKeyValue, String rangeKeyName, Object rangeKeyValue, List<String> attributesToGet) {
+	/**
+	 * query Key Attributes
+	 * 
+	 * @param tableName
+	 * @param hashKeyFilter
+	 * @param attributeFilters
+	 * @param attributesToGet
+	 * @param numRecordsToGet
+	 * @param sortAsc
+	 * @return
+	 */
 		
-		HashMap<String, AttributeValue> key = new HashMap<String, AttributeValue>();
-		if (hashKeyValue instanceof String) {
-			key.put(hashKeyName, new AttributeValue().withS((String)hashKeyValue));
-		} else if (hashKeyValue instanceof Integer) {
-			key.put(hashKeyName, new AttributeValue().withN(String.valueOf((Integer)hashKeyValue)));			
+
+	public List<Map<String, Object>> queryKeyAttributes(String tableName, 
+			Filter hashKeyFilter,  
+			List<Filter> attributeFilters, 
+			List<String> attributesToGet, 
+			int numRecordsToGet,
+			boolean sortAsc) {
+		
+		Map<String, Condition> conditions = new HashMap<String, Condition>();
+		
+		Condition hashKeyCondition = new Condition()
+			.withComparisonOperator(mapComparator(hashKeyFilter.getComparator()))
+			.withAttributeValueList(mapAttributeValue(hashKeyFilter.getValue()));
+		
+		conditions.put(hashKeyFilter.getName(), hashKeyCondition);		
+
+		for (Filter attributeFilter : attributeFilters) {
+			
+			Condition attrCondition = new Condition()
+				.withComparisonOperator(mapComparator(attributeFilter.getComparator()))
+				.withAttributeValueList(mapAttributeValue(attributeFilter.getValue()));		
+			
+			conditions.put(attributeFilter.getName(), attrCondition);	
 		}
 		
-		if (rangeKeyName != null) {
-			if (rangeKeyValue instanceof String) {
-				key.put(rangeKeyName, new AttributeValue().withS((String)rangeKeyValue));
-			} else if (rangeKeyValue instanceof Integer) {
-				key.put(rangeKeyName, new AttributeValue().withN(String.valueOf((Integer)rangeKeyValue)));			
-			}
+		QueryRequest queryRequest = new QueryRequest()
+			.withTableName(tableName)
+			.withKeyConditions(conditions)
+			.withAttributesToGet(attributesToGet)
+			.withConsistentRead(true)
+			.withSelect("SPECIFIC_ATTRIBUTES")
+			.withScanIndexForward(sortAsc);
+		
+		if (numRecordsToGet != -1) {
+			queryRequest.setLimit(numRecordsToGet);
 		}
 		
-		GetItemRequest itemRequest = new GetItemRequest()
-				.withTableName(tableName)
-				.withKey(key)
-				.withConsistentRead(true)
-				.withAttributesToGet(attributesToGet);
+		QueryResult queryResult  = getConnection().query(queryRequest);
 		
-		GetItemResult itemResult = getConnection().getItem(itemRequest);
+		List<Map<String, Object>> dataList = mapItemList(queryResult.getItems());	
 		
-		Map<String, AttributeValue> item = itemResult.getItem();
-		
-		Map<String, Object> data = new HashMap<String, Object>();
-		
-        for (Map.Entry<String, AttributeValue> attribute : item.entrySet()) {
-            String name = attribute.getKey();
-            Object value = attribute.getValue();
-            
-            data.put(name, value);
-        }		
-		
-		return data;
+		return dataList;
 	}
 	
 	/**
@@ -127,30 +147,16 @@ public class DynamoDBHelper {
         
         ScanResult result = getConnection().scan(request);
         
-        List<Map<String, Object>> dataItems = new ArrayList<Map<String, Object>>();
-        
-        for (Map<String, AttributeValue> item : result.getItems()) {
-            printItem(item);
-            Map<String, Object> dataItem = new HashMap<String, Object>();
-            dataItems.add(dataItem);
-  
-            for (Map.Entry<String, AttributeValue> attribute : item.entrySet()) {
-                String name = attribute.getKey();
-                AttributeValue value = attribute.getValue();
-                
-                if (value.getS() != null) {
-                	dataItem.put(name, value.getS());
-                } else if (value.getN() != null) {
-                	dataItem.put(name, value.getN());
-                } else if (value.getB() != null) {
-                	dataItem.put(name, value.getB());
-                }
-            }          
-        }
+        List<Map<String, Object>> dataItems = mapItemList(result.getItems());
         
         return dataItems;
     }	
     
+    /**
+     * Log an item
+     * 
+     * @param attributeList
+     */
     private void printItem(Map<String, AttributeValue> attributeList) {
         for (Map.Entry<String, AttributeValue> item : attributeList.entrySet()) {
             String attributeName = item.getKey();
@@ -164,7 +170,108 @@ public class DynamoDBHelper {
                     + (value.getBS() == null ? "" : "BS=[" + value.getBS() + "] \n"));
         }
     }   
-
+    
+	/**
+	 * map comparator to String
+	 * 
+	 * @param comparator
+	 * @return
+	 */
+	private String mapComparator(int comparator) {
+			
+		switch (comparator) {
+		
+			case Filter.COMPARATOR_EQ:
+				return ComparisonOperator.EQ.toString();
+				
+			case Filter.COMPARATOR_NE:
+				return ComparisonOperator.NE.toString();			//Supported by scan API only
+				
+			case Filter.COMPARATOR_CONTAINS:
+				return ComparisonOperator.CONTAINS.toString();
+				
+			case Filter.COMPARATOR_DOES_NOT_CONTAIN:			//Supported by scan API only
+				return ComparisonOperator.NOT_CONTAINS.toString();
+				
+			case Filter.COMPARATOR_BEGINS_WITH:					//Supported by scan API only
+				return ComparisonOperator.BEGINS_WITH.toString();
+				
+			case Filter.COMPARATOR_GT:
+				return ComparisonOperator.GT.toString();
+				
+			case Filter.COMPARATOR_LT:
+				return ComparisonOperator.LT.toString();
+				
+			case Filter.COMPARATOR_BETWEEN:
+				return ComparisonOperator.BETWEEN.toString();
+				
+			default :
+				throw new RuntimeException("Dynamodb doesnot support comparator - " + comparator);
+		}
+	}
+    
+	/**
+	 * map object value to AttributeValue
+	 * 
+	 * @param value
+	 * @return
+	 */
+	private AttributeValue mapAttributeValue(Object value) {
+		
+        if (value instanceof String) {
+        	return (new AttributeValue().withS((String)value));
+        } else if (value instanceof Integer) {
+        	return(new AttributeValue().withN(String.valueOf(value)));	
+        }				
+        return null;
+	}
+	
+	/**
+	 * map attribute value map to object map
+	 * 
+	 * @param item
+	 * @return
+	 */
+	private Map<String, Object> mapAttributeValueMap(Map<String, AttributeValue> item) {
+		
+		printItem(item);
+		
+        Map<String, Object> dataItem = new HashMap<String, Object>();
+  
+        for (Map.Entry<String, AttributeValue> attribute : item.entrySet()) {
+            String name = attribute.getKey();
+            AttributeValue value = attribute.getValue();
+            
+            if (value.getS() != null) {
+            	dataItem.put(name, value.getS());
+            } else if (value.getN() != null) {
+            	dataItem.put(name, value.getN());
+            } else if (value.getB() != null) {
+            	dataItem.put(name, value.getB());
+            }
+        }           
+        return dataItem;
+	}
+	
+	/**
+	 * map item list to object list
+	 * 
+	 * @param items
+	 * @return
+	 */
+	private List<Map<String, Object>> mapItemList(List<Map<String, AttributeValue>> items) {
+		
+		List<Map<String, Object>> dataItems = new ArrayList<Map<String, Object>>();
+		
+		for (Map<String, AttributeValue> item : items) {
+			
+			Map<String, Object> dataItem = mapAttributeValueMap(item);
+			dataItems.add(dataItem);
+		}
+		return dataItems;
+	}
+	
+	
 	public static void main(String[] args) {
 		// TODO Auto-generated method stub
 
