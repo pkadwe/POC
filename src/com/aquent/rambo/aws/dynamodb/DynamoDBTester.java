@@ -17,15 +17,18 @@ public class DynamoDBTester {
 		String tableName = "proof_of_concept";
 
 		System.out.println("Adding items...");
-		Map<String, Object> data = new HashMap<String, Object>();
+		List<Map<String, Object>> itemList = new ArrayList<Map<String, Object>>();
+		
+		Map<String, Object> item = new HashMap<String, Object>();
 		for (int i=1; i<=500; i++) {
-			data.put("hash_key", "hash_key_" + new Random().nextInt(1000));
-			data.put("range_key", new Random().nextInt(1000));
-			data.put("gsi_uniq_key", "UNIQ_" + new Random().nextInt(1000));
-			data.put("column_1", "column_1_" + new Random().nextInt(1000));
-			data.put("column_2", "column_2_" + new Random().nextInt(1000));
-			helper.addItem(tableName, data);
+			item.put("hash_key", "hash_key_" + new Random().nextInt(1000));
+			item.put("range_key", new Random().nextInt(1000));
+			item.put("gsi_uniq_key", "UNIQ_" + new Random().nextInt(1000));
+			item.put("column_1", "column_1_" + new Random().nextInt(1000));
+			item.put("column_2", "column_2_" + new Random().nextInt(1000));
+			itemList.add(item);
 		}
+		helper.addItems(tableName, itemList);
 		
 		System.out.println("Querying on primary key...");
 		List<String> attributesToGet = new ArrayList<String>();

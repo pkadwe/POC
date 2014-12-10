@@ -58,23 +58,26 @@ public class DynamoDBHelper {
 	 * @param data
 	 */
 
-	public void addItem(String tableName, Map<String, Object> data) {
-		
-		Map<String, AttributeValue> item = new HashMap<String, AttributeValue>();
-		
-        for (Map.Entry<String, Object> dataAttribute : data.entrySet()) {
-            String name = dataAttribute.getKey();
-            Object value = dataAttribute.getValue();
-            
-            item.put(name, mapAttributeValue(value));
-        }
-		
-		PutItemRequest itemRequest = new PutItemRequest().withTableName(tableName).withItem(item);
+	public void addItem(String tableName, Map<String, Object> item) {
+				
+		AmazonDynamoDBClient conn = getConnection();
+		addItem(tableName, item, conn);
+		conn.shutdown();
+	}
+	
+	/**
+	 * add list of items
+	 * 
+	 * @param tableName
+	 * @param itemList
+	 */
+	public void addItems(String tableName, List<Map<String, Object>> itemList) {
 		
 		AmazonDynamoDBClient conn = getConnection();
-		conn.putItem(itemRequest);
+		for (Map<String, Object> item : itemList) {
+			addItem(tableName, item, conn);
+		}
 		conn.shutdown();
-		logger.debug("Item added to table: " + tableName);
 	}
 
 	/**
@@ -354,5 +357,29 @@ public class DynamoDBHelper {
 		}
 		return dataItems;
 	}
+	
+	/**
+	 * Add item
+	 * 
+	 * @param tableName
+	 * @param data
+	 */
+	private void addItem(String tableName, Map<String, Object> itemData, AmazonDynamoDBClient conn) {
+		
+		Map<String, AttributeValue> item = new HashMap<String, AttributeValue>();
+		
+        for (Map.Entry<String, Object> dataAttribute : itemData.entrySet()) {
+            String name = dataAttribute.getKey();
+            Object value = dataAttribute.getValue();
+            
+            item.put(name, mapAttributeValue(value));
+        }
+		
+		PutItemRequest itemRequest = new PutItemRequest().withTableName(tableName).withItem(item);
+		
+		conn.putItem(itemRequest);
+		
+		logger.debug("Item added to table: " + tableName);
+	}	
 
 }
