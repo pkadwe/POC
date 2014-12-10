@@ -15,6 +15,12 @@ public class Filter {
 	int comparator;
 	Object value;	
 	
+	public Filter(String name, int comparator, Object value) {
+		this.name = name;
+		this.comparator = comparator;
+		this.value = value;
+	}
+	
 	public String getName() {
 		return name;
 	}

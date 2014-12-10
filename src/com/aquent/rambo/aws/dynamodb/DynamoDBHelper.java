@@ -1,3 +1,12 @@
+/**
+ *
+ * Copyright: Copyright (c) 2012 by AQUENT, L.L.C.
+ * Company: AQUENT, L.L.C.
+ *  
+ * @created 10-Dec-2014
+ * @version 1.0
+ *
+ */
 package com.aquent.rambo.aws.dynamodb;
 
 import java.util.ArrayList;
@@ -64,25 +73,24 @@ public class DynamoDBHelper {
 		
 		AmazonDynamoDBClient conn = getConnection();
 		conn.putItem(itemRequest);
-		conn.shutdown();		
+		conn.shutdown();
+		logger.debug("Item added to table: " + tableName);
 	}
-	
+
 	/**
-	 * query Key Attributes
+	 * Query on primary key
 	 * 
 	 * @param tableName
 	 * @param hashKeyFilter
-	 * @param attributeFilters
+	 * @param rangeKeyFilters
 	 * @param attributesToGet
 	 * @param numRecordsToGet
 	 * @param sortAsc
 	 * @return
 	 */
-		
-
-	public List<Map<String, Object>> queryKeyAttributes(String tableName, 
+	public List<Map<String, Object>> queryPrimaryKey(String tableName, 
 			Filter hashKeyFilter,  
-			List<Filter> attributeFilters, 
+			List<Filter> rangeKeyFilters, 
 			List<String> attributesToGet, 
 			int numRecordsToGet,
 			boolean sortAsc) {
@@ -93,23 +101,26 @@ public class DynamoDBHelper {
 			.withComparisonOperator(mapComparator(hashKeyFilter.getComparator()))
 			.withAttributeValueList(mapAttributeValue(hashKeyFilter.getValue()));
 		
-		conditions.put(hashKeyFilter.getName(), hashKeyCondition);		
+		conditions.put(hashKeyFilter.getName(), hashKeyCondition);	
+		
+		if (rangeKeyFilters != null) {
 
-		for (Filter attributeFilter : attributeFilters) {
-			
-			Condition attrCondition = new Condition()
-				.withComparisonOperator(mapComparator(attributeFilter.getComparator()))
-				.withAttributeValueList(mapAttributeValue(attributeFilter.getValue()));		
-			
-			conditions.put(attributeFilter.getName(), attrCondition);	
+			for (Filter rangeKeyFilter : rangeKeyFilters) {
+				
+				Condition rangeKeyCondition = new Condition()
+					.withComparisonOperator(mapComparator(rangeKeyFilter.getComparator()))
+					.withAttributeValueList(mapAttributeValue(rangeKeyFilter.getValue()));		
+				
+				conditions.put(rangeKeyFilter.getName(), rangeKeyCondition);	
+			}
 		}
 		
 		QueryRequest queryRequest = new QueryRequest()
 			.withTableName(tableName)
 			.withKeyConditions(conditions)
 			.withAttributesToGet(attributesToGet)
-			.withConsistentRead(true)
 			.withSelect("SPECIFIC_ATTRIBUTES")
+			.withConsistentRead(true)
 			.withScanIndexForward(sortAsc);
 		
 		if (numRecordsToGet != -1) {
@@ -124,7 +135,69 @@ public class DynamoDBHelper {
 	}
 	
 	/**
-	 * Scan an attribute
+	 * query on Index Key
+	 * 
+	 * @param tableName
+	 * @param indexKeyName
+	 * @param hashKeyFilter
+	 * @param rangeKeyFilters
+	 * @param attributesToGet
+	 * @param numRecordsToGet
+	 * @param sortAsc
+	 * @return
+	 */
+	
+	public List<Map<String, Object>> queryIndexKey(String tableName, 
+			String indexKeyName,
+			Filter hashKeyFilter,  
+			List<Filter> rangeKeyFilters, 
+			List<String> attributesToGet, 
+			int numRecordsToGet,
+			boolean sortAsc) {
+		
+		Map<String, Condition> conditions = new HashMap<String, Condition>();
+		
+		Condition hashKeyCondition = new Condition()
+			.withComparisonOperator(mapComparator(hashKeyFilter.getComparator()))
+			.withAttributeValueList(mapAttributeValue(hashKeyFilter.getValue()));
+		
+		conditions.put(hashKeyFilter.getName(), hashKeyCondition);	
+		
+		if (rangeKeyFilters != null) {
+
+			for (Filter rangeKeyFilter : rangeKeyFilters) {
+				
+				Condition rangeKeyCondition = new Condition()
+					.withComparisonOperator(mapComparator(rangeKeyFilter.getComparator()))
+					.withAttributeValueList(mapAttributeValue(rangeKeyFilter.getValue()));		
+				
+				conditions.put(rangeKeyFilter.getName(), rangeKeyCondition);	
+			}
+		}
+		
+		QueryRequest queryRequest = new QueryRequest()
+			.withTableName(tableName)
+			.withIndexName(indexKeyName)
+			.withKeyConditions(conditions)
+			.withAttributesToGet(attributesToGet)
+			.withSelect("SPECIFIC_ATTRIBUTES")
+			.withConsistentRead(false)
+			.withScanIndexForward(sortAsc);
+		
+		if (numRecordsToGet != -1) {
+			queryRequest.setLimit(numRecordsToGet);
+		}
+		
+		QueryResult queryResult  = getConnection().query(queryRequest);
+		
+		List<Map<String, Object>> dataList = mapItemList(queryResult.getItems());	
+		
+		return dataList;
+	}
+	
+	
+	/**
+	 * Scan attributes
 	 * 
 	 * @param tableName
 	 * @param attributeName
@@ -132,21 +205,32 @@ public class DynamoDBHelper {
 	 * @param attributesToGet
 	 * @return
 	 */
-    public List<Map<String, Object>> scanAttribute(String tableName, String attributeName, String attributeValue, List<String> attributesToGet) {
+    public List<Map<String, Object>> scanAttribute(String tableName, 
+    		List<Filter> attributeConditions,  
+    		List<String> attributesToGet,
+			int numRecordsToGet) {
     	
     	Map<String, Condition> scanFilter = new HashMap<String, Condition>();
-		Condition condition = new Condition()
-			.withComparisonOperator(ComparisonOperator.EQ.toString())
-			.withAttributeValueList(new AttributeValue().withS(attributeValue));
-		scanFilter.put(attributeName, condition);
+    	
+    	for (Filter filter : attributeConditions) {
+    		
+			Condition condition = new Condition()
+				.withComparisonOperator(mapComparator(filter.getComparator()))
+				.withAttributeValueList(mapAttributeValue(filter.getValue()));	
+			scanFilter.put(filter.getName(), condition);
+    	}
 
         ScanRequest request = new ScanRequest()
         	.withTableName(tableName)
         	.withAttributesToGet(attributesToGet)
         	.withScanFilter(scanFilter);
         
-        ScanResult result = getConnection().scan(request);
+		if (numRecordsToGet != -1) {
+			request.setLimit(numRecordsToGet);
+		}        
         
+        ScanResult result = getConnection().scan(request);
+               
         List<Map<String, Object>> dataItems = mapItemList(result.getItems());
         
         return dataItems;
@@ -269,12 +353,6 @@ public class DynamoDBHelper {
 			dataItems.add(dataItem);
 		}
 		return dataItems;
-	}
-	
-	
-	public static void main(String[] args) {
-		// TODO Auto-generated method stub
-
 	}
 
 }
